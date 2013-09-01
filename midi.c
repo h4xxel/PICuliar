@@ -3,7 +3,14 @@
 #include <stdint.h>
 #include <limits.h>
 
+#include "midi.h"
+
 #define OSCILLATORS 6
+
+#define CHIP1BC1 RA1
+#define CHIP1BDIR RA0
+#define CHIP2BC1 RA2
+#define CHIP2BDIR RA4
 
 #define NOP _asm nop _endasm
 
@@ -35,228 +42,120 @@ struct OSCILLATOR {
 
 unsigned int current;
 
-const unsigned short midi_freqdiv[]={
-	0x3bb9,
-	0x385f,
-	0x3535,
-	0x3238,
-	0x2f67,
-	0x2cbe,
-	0x2a3b,
-	0x27dc,
-	0x259f,
-	0x2383,
-	0x2185,
-	0x1fa3,
-	0x1ddd,
-	0x1c2f,
-	0x1a9a,
-	0x191c,
-	0x17b3,
-	0x165f,
-	0x151d,
-	0x13ee,
-	0x12d0,
-	0x11c1,
-	0x10c2,
-	0xfd2,
-	0xeee,
-	0xe18,
-	0xd4d,
-	0xc8e,
-	0xbda,
-	0xb2f,
-	0xa8f,
-	0x9f7,
-	0x968,
-	0x8e1,
-	0x861,
-	0x7e9,
-	0x777,
-	0x70c,
-	0x6a7,
-	0x647,
-	0x5ed,
-	0x598,
-	0x547,
-	0x4fc,
-	0x4b4,
-	0x470,
-	0x431,
-	0x3f4,
-	0x3bc,
-	0x386,
-	0x353,
-	0x324,
-	0x2f6,
-	0x2cc,
-	0x2a4,
-	0x27e,
-	0x25a,
-	0x238,
-	0x218,
-	0x1fa,
-	0x1de,
-	0x1c3,
-	0x1aa,
-	0x192,
-	0x17b,
-	0x166,
-	0x152,
-	0x13f,
-	0x12d,
-	0x11c,
-	0x10c,
-	0xfd,
-	0xef,
-	0xe1,
-	0xd5,
-	0xc9,
-	0xbe,
-	0xb3,
-	0xa9,
-	0x9f,
-	0x96,
-	0x8e,
-	0x86,
-	0x7f,
-	0x77,
-	0x71,
-	0x6a,
-	0x64,
-	0x5f,
-	0x59,
-	0x54,
-	0x50,
-	0x4b,
-	0x47,
-	0x43,
-	0x3f,
-	0x3c,
-	0x38,
-	0x35,
-	0x32,
-	0x2f,
-	0x2d,
-	0x2a,
-	0x28,
-	0x26,
-	0x24,
-	0x22,
-	0x20,
-	0x1e,
-	0x1c,
-	0x1b,
-	0x19,
-	0x18,
-	0x16,
-	0x15,
-	0x14,
-	0x13,
-	0x12,
-	0x11,
-	0x10,
-	0xf,
-	0xe,
-	0xd,
-	0xd,
-	0xc,
-	0xb,
-	0xb,
-	0xa,
-};
-
 void iodelay() {
+	NOP;
+	NOP;
+	NOP;
+	NOP;
+	NOP;
+	NOP;
+	NOP;
+	NOP;
+	NOP;
 	NOP;
 }
 
 void loadreg(unsigned char chip, unsigned char reg) {
 	if(chip) {
-		RA2=0x1;
+		CHIP2BC1=0x1;
 		PORTC=reg;
-		RA4=0x1;
+		CHIP2BDIR=0x1;
 		iodelay();
-		RA4=0x0;
-		RA2=0x0;
+		CHIP2BDIR=0x0;
+		CHIP2BC1=0x0;
 		iodelay();
 	} else {
-		RA0=0x1;
+		CHIP1BC1=0x1;
 		PORTC=reg;
-		RA1=0x1;
+		CHIP1BDIR=0x1;
 		iodelay();
-		RA1=0x0;
-		RA0=0x0;
+		CHIP1BDIR=0x0;
+		CHIP1BC1=0x0;
 		iodelay();
 	}
 }
 
 void write(unsigned char chip, unsigned char dat) {
 	if(chip) {
-		RA2=0x0;
+		CHIP2BC1=0x0;
 		PORTC=dat;
-		RA4=0x1;
+		CHIP2BDIR=0x1;
 		iodelay();
-		RA4=0x0;
+		CHIP2BDIR=0x0;
 	} else {
-		RA0=0x0;
+		CHIP1BC1=0x0;
 		PORTC=dat;
-		RA1=0x1;
+		CHIP1BDIR=0x1;
 		iodelay();
-		RA1=0x0;
+		CHIP1BDIR=0x0;
 	}
 }
 
 unsigned char recv() {
 	unsigned char c;
-	if(OERR||FERR) {
-		CREN=0;
-		CREN=1;
-		return 0;
-	}
+	do
+		if(OERR||FERR) {
+			CREN=0;
+			c=RCREG;
+			c=RCREG;
+			SPEN=0;
+			SPEN=1;
+			CREN=1;
+		}
 	while(!RCIF);
+		
 	c=RCREG;
 	return c;
 }
 
 void midi_note_on(unsigned char note, unsigned char vol, unsigned int channel) {
+	/*some ugly hand optimizations*/
 	unsigned char i, j=0;
 	unsigned int tim=current;
 	unsigned short freqdiv=midi_freqdiv[note];
-	unsigned char chip;
+	unsigned char chip1=0, reg1=0;
+	unsigned char chip2, reg2;
 	if(channel==9)
 		return;
 	for(i=0; i<OSCILLATORS; i++) {
 		if(oscillator[i].note==0xFF) {
-			chip=i/3;
+			//chip=i/3;
 			oscillator[i].note=note;
 			oscillator[i].time=current;
 			oscillator[i].channel=channel;
-			i%=3;
-			loadreg(chip, i<<1);
-			write(chip, freqdiv);
-			loadreg(chip, (i<<1)+1);
-			write(chip, freqdiv>>8);
-			loadreg(chip, REG_AMPA+i);
-			write(chip, (vol>>4)+8);
+			//i%=3;
+			loadreg(chip1, REG_AMPA+(reg1>>1));
+			write(chip1, (vol>>4)+8);
+			loadreg(chip1, reg1);
+			write(chip1, freqdiv);
+			reg1++;
+			loadreg(chip1, reg1);
+			write(chip1, freqdiv>>8);
 			return;
 		} else {
 			if(oscillator[i].time<tim) {
 				j=i;
+				reg2=reg1;
+				chip2=chip1;
 				tim=oscillator[i].time;
 			}
 		}
+		reg1+=2;
+		if(reg1==6) {
+			reg1=0;
+			chip1++;
+		}
 	}
-	chip=j/3;
 	oscillator[j].note=note;
 	oscillator[j].time=current;
 	oscillator[j].channel=channel;
-	j%=3;
-	loadreg(chip, j<<1);
-	write(chip, freqdiv);
-	loadreg(chip, (j<<1)+1);
-	write(chip, freqdiv>>8);
-	loadreg(chip, REG_AMPA+j);
-	write(chip, (vol>>4)+8);
+	loadreg(chip2, REG_AMPA+(reg2>>1));
+	write(chip2, (vol>>4)+8);
+	loadreg(chip2, reg2);
+	write(chip2, freqdiv);
+	reg2++;
+	loadreg(chip2, reg2);
+	write(chip2, freqdiv>>8);
 }
 
 void midi_note_off(unsigned char note) {
@@ -274,7 +173,7 @@ void midi_note_off(unsigned char note) {
 	}
 }
 
-void midi_pitch_bend(unsigned short pitch, unsigned char channel) {
+void midi_pitch_bend(unsigned char channel, unsigned short pitch) {
 	unsigned char i;
 	unsigned char note;
 	//might need long ;_;
@@ -324,7 +223,7 @@ void midi_pitch_bend(unsigned short pitch, unsigned char channel) {
 void isr() interrupt 0 {
 	unsigned char chip;
 	if(RABIF) {
-		if(RB6) {
+		if(RA3) {
 			char i;
 			for(i=0; i<OSCILLATORS; i++) {
 				chip=i/3;
@@ -334,19 +233,22 @@ void isr() interrupt 0 {
 				write(chip, 0x0);
 			}
 		}
+		CREN=0;
+		SPEN=0;
+		SPEN=1;
+		CREN=1;
 		RABIF=0;
 	}
 }
 
 void main() {
 	unsigned char event=0, c, a, b;
-	unsigned long varlen;
 	SCS=0;
 	
-	TRISA=0x0;
+	TRISA=0x8;
 	ANSEL=0x0;
 	ANSELH=0x0;
-	TRISB=0x50;
+	TRISB=0x0;
 	TRISC=0x0;
 	PORTA=0;
 	PORTB=0;
@@ -357,14 +259,12 @@ void main() {
 		oscillator[a].time=0x0;
 	}
 	
-	iodelay();
-	
 	/*midi baudrate, 31250*/
-	//SPBRG=14;
-	SPBRG=51;
-	BRGH=1;
-	TXEN=1;
-	CREN=1;
+	SPBRG=9;
+	//SPBRG=51;
+	BRGH=0;
+	TXEN=0;
+	CREN=0;
 	SYNC=0;
 	SPEN=1;
 	
@@ -381,9 +281,10 @@ void main() {
 		write(a, 0xF8);
 	}
 	
-	IOCB6=1;
+	IOCA3=1;
 	INTCON=0x88;
 	
+	CREN=1;
 	for(;;) {
 		c=recv();
 		if(c&0x80) {
@@ -414,8 +315,8 @@ void main() {
 			case 0xE0:
 				/*pitch wheel change*/
 				b=recv();
-				if(RB4)
-					midi_pitch_bend((((short) b)<<7)|a, event&0xF);
+				//if(RB4)
+				midi_pitch_bend(event&0xF, (((short) b)<<7)|a);
 				break;
 			case 0xC0:
 				/*program change*/
@@ -424,10 +325,8 @@ void main() {
 				break;
 			case 0xF0:
 				/*sysex*/
-				for(varlen=a&0x7F; (a=recv())&0x80; varlen=(varlen<<7)+(a&0x7F));
-				
-				while(varlen--)
-					recv();
+				while(a!=0xF7)
+					a=recv();
 				break;
 		}
 		current++;
